@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 import time
+import logging
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -17,6 +18,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 NEXUS_API_SECRET = os.getenv("NEXUS_API_SECRET", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+logger = logging.getLogger("nexus-ai")
 GUEST_PER_MINUTE = int(os.getenv("GUEST_PER_MINUTE", "6"))
 GUEST_PER_DAY = int(os.getenv("GUEST_PER_DAY", "40"))
 _rate_windows = defaultdict(deque)
@@ -133,8 +135,21 @@ async def chat_stream(body: ChatRequest, request: Request):
                     conn.execute("INSERT INTO messages (id,conversation_id,role,content) VALUES (%s,%s,'assistant',%s)", (uuid.uuid4(),conversation_id,answer))
                     conn.execute("UPDATE conversations SET updated_at=NOW() WHERE id=%s", (conversation_id,))
             yield "data: " + json.dumps({"type":"done","conversation_id":str(conversation_id)}) + "\n\n"
-        except Exception:
-            yield "data: " + json.dumps({"type":"error","message":"The response could not be completed. Please try again."}) + "\n\n"
+        except Exception as exc:
+            logger.exception("Guest chat generation failed (%s)", type(exc).__name__)
+            # Return a useful, non-sensitive error to the guest while keeping secrets out of the response.
+            from openai import AuthenticationError, RateLimitError, APIConnectionError, APIStatusError
+            if isinstance(exc, AuthenticationError):
+                public_message = "The AI provider rejected the server API key. Please contact the site administrator."
+            elif isinstance(exc, RateLimitError):
+                public_message = "The AI service has reached its usage limit. Please try again later."
+            elif isinstance(exc, APIConnectionError):
+                public_message = "The AI provider could not be reached. Please try again."
+            elif isinstance(exc, APIStatusError):
+                public_message = "The AI provider returned an error. Please try again in a moment."
+            else:
+                public_message = "The response could not be completed. Please try again."
+            yield "data: " + json.dumps({"type":"error","message":public_message}) + "\n\n"
         finally:
             await client.close()
     return StreamingResponse(events(),media_type="text/event-stream",headers={"Cache-Control":"no-cache, no-transform","X-Accel-Buffering":"no"})

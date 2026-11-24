@@ -15,9 +15,10 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+XAI_API_KEY = os.getenv("XAI_API_KEY", "")
+XAI_BASE_URL = os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
 NEXUS_API_SECRET = os.getenv("NEXUS_API_SECRET", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+XAI_MODEL = os.getenv("XAI_MODEL", "grok-4.3")
 logger = logging.getLogger("nexus-ai")
 GUEST_PER_MINUTE = int(os.getenv("GUEST_PER_MINUTE", "6"))
 GUEST_PER_DAY = int(os.getenv("GUEST_PER_DAY", "40"))
@@ -85,7 +86,7 @@ def root():
 
 @app.get("/health")
 def health():
-    result = {"status":"ok","database":"not_configured","openai":"configured" if OPENAI_API_KEY else "not_configured"}
+    result = {"status":"ok","database":"not_configured","grok":"configured" if XAI_API_KEY else "not_configured"}
     if DATABASE_URL:
         try:
             with db() as conn:
@@ -93,7 +94,7 @@ def health():
             result["database"] = "connected"
         except Exception:
             result.update(status="degraded", database="unavailable")
-    if not OPENAI_API_KEY:
+    if not XAI_API_KEY:
         result["status"] = "degraded"
     return result
 
@@ -102,8 +103,8 @@ async def chat_stream(body: ChatRequest, request: Request):
     enforce_guest_limits(request)
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Conversation storage is not configured")
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=503, detail="The AI response service is not configured")
+    if not XAI_API_KEY:
+        raise HTTPException(status_code=503, detail="The Grok AI response service is not configured")
     try:
         conversation_id = uuid.UUID(body.conversation_id) if body.conversation_id else uuid.uuid4()
     except ValueError:
@@ -119,11 +120,11 @@ async def chat_stream(body: ChatRequest, request: Request):
     messages = [{"role":"system","content":"You are NEXUS AI, a helpful, accurate assistant. Be clear, useful, and safe. If uncertain, say so. Do not claim to browse or use tools unless available."}]
     messages.extend({"role":role,"content":content} for role,content in history_rows)
     messages.append({"role":"user","content":body.message})
-    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    client = AsyncOpenAI(api_key=XAI_API_KEY, base_url=XAI_BASE_URL)
     async def events():
         answer_parts = []
         try:
-            stream = await client.chat.completions.create(model=OPENAI_MODEL,messages=messages,stream=True,max_tokens=700)
+            stream = await client.chat.completions.create(model=XAI_MODEL,messages=messages,stream=True,max_completion_tokens=700)
             async for chunk in stream:
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:

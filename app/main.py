@@ -102,7 +102,7 @@ async def chat_stream(body: ChatRequest, x_nexus_secret: Optional[str] = Header(
     with db() as conn:
         exists = conn.execute("SELECT id FROM conversations WHERE id = %s", (conversation_id,)).fetchone()
         if not exists:
-            title = body.message.strip().replace("\n", " ")[: sixty := 60] if body.message.strip() else "New chat"
+            title = body.message.strip().replace("\n", " ")[:60] if body.message.strip() else "New chat"
             conn.execute("INSERT INTO conversations (id, title) VALUES (%s, %s)", (conversation_id, title))
         history_rows = conn.execute(
             "SELECT role, content FROM messages WHERE conversation_id = %s ORDER BY created_at ASC LIMIT 40",
